@@ -1,0 +1,30 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+
+# Secrets：禁止烤進 image
+.env
+.env.*
+!.env.production.example
+
+# Runtime output
+results
+results/*
+*.log
+
+# Windows 開發機依賴，Linux container 不使用
+Release-*
+Release-*/
+fonts/msjh.ttc
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db

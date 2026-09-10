@@ -1,0 +1,33 @@
+services:
+  invoice-api:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/invoice-recognition-api:1.0.0
+    container_name: invoice-recognition-api
+
+    env_file:
+      - .env.production
+
+    environment:
+      TZ: Asia/Taipei
+
+      # 容器內固定路徑
+      FONT_PATH: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+
+      # Linux 已由 apt 安裝 poppler-utils，留空讓 pdf2image 從 PATH 找
+      POPPLER_PATH: ""
+
+    ports:
+      - "8000:8000"
+
+    # results 要保留，避免容器重建後 job 結果消失
+    volumes:
+      - ./results:/app/results
+
+      # 標準答案 Excel 不烤進 image，方便正式環境獨立維護。
+      # 若正式機啟用 SELinux，可把 :ro 改成 :ro,Z
+      - ./file:/app/file:ro
+
+    restart: unless-stopped
+

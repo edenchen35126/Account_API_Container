@@ -1,0 +1,20 @@
+{
+  "paddleocr_api_url": "http://mis-4141:8081/paddleocr/ocr",
+  "paddleocr_api_timeout": 300,
+  "excel_path": "file/會計憑證POC.xlsx",
+  "detail_field_presets": {
+    "FULL": [
+      "品名",
+      "數量",
+      "單價",
+      "金額"
+    ],
+    "AMOUNT": [
+      "品名",
+      "金額"
+    ]
+  },
+  "poppler_path": null,
+  "font_path": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+  "dpi": 700
+}
