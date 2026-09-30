@@ -852,7 +852,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
 
     if "賣方統編" in active_rules:
         # --- 3. 賣方統編：必須是完整 8 位數字才通過（不比對 Excel）---
-        ocr_seller_tax = (seller_tax_id or "").strip()
+        ocr_seller_tax = str(seller_tax_id or "").strip()
 
         seller_tax_valid = bool(
             re.fullmatch(r"\d{8}", ocr_seller_tax)
@@ -866,7 +866,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
 
     if "賣方公司名稱" in active_rules:
         # --- 4. 賣方公司名稱：只要 OCR 有值就通過（不比對 Excel）---
-        ocr_seller_name = (seller_company_name or "").strip()
+        ocr_seller_name = str(seller_company_name or "").strip()
         compare["賣方公司名稱"] = {
             "標準答案": "（有值即通過）",
             "OCR結果":  ocr_seller_name,
@@ -900,7 +900,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
     if llm_fields:
         if "年度期間" in active_rules:
             # 年度期間：不再與 Excel 比對，只要有辨識值即通過
-            ocr_period = (llm_fields.get("年度期間") or "").strip()
+            ocr_period = str(llm_fields.get("年度期間") or "").strip()
             compare["年度期間"] = {
                 "OCR結果":  ocr_period,
                 "說明":     "只要有值即通過",
@@ -909,7 +909,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
 
         if "未稅金額" in active_rules:
             # --- 5. 未稅金額：標準答案=明細金額加總，OCR結果維持原邏輯 ---
-            ocr_sales = (llm_fields.get("未稅金額") or "").replace(",", "").strip()
+            ocr_sales = str(llm_fields.get("未稅金額") or "").replace(",", "").strip()
             std_sales_str = str(std_sales_amount) if std_sales_amount is not None else ""
             # 比對時去除小數點後多餘的零
             try:
@@ -927,7 +927,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
 
         if "稅額" in active_rules:
             # --- 6. 稅額：標準答案依稅別計算，OCR結果維持原邏輯 ---
-            ocr_tax = (llm_fields.get("稅額") or "").replace(",", "").strip()
+            ocr_tax = str(llm_fields.get("稅額") or "").replace(",", "").strip()
             std_tax_str = str(std_tax_amount) if std_tax_amount is not None else ""
             try:
                 ocr_tax_num = int(float(ocr_tax)) if ocr_tax else None
@@ -945,7 +945,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
 
         if "合計金額" in active_rules:
             # --- 7. 合計金額：標準答案=未稅+稅額，OCR結果維持原邏輯 ---
-            ocr_total = (llm_fields.get("合計金額") or "").replace(",", "").strip()
+            ocr_total = str(llm_fields.get("合計金額") or "").replace(",", "").strip()
             std_total_str = str(std_total_amount) if std_total_amount is not None else ""
             try:
                 ocr_total_num = int(float(ocr_total)) if ocr_total else None
@@ -961,7 +961,7 @@ def compare_with_standard(buyer_tax_id, seller_tax_id, buyer_company_name, selle
             }
 
         if "金額大寫中文" in active_rules:
-            original_chinese = (
+            original_chinese = str(
                 llm_fields.get("金額大寫中文") or ""
             ).strip()
 
@@ -3098,6 +3098,7 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
                         val = retry_result.get(field)
                         if val is None:
                             continue
+
                         print(f"[LLM重試] 更新欄位 [{field}]: → {val}")
 
                         if field == "發票號碼":
@@ -3332,6 +3333,7 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
                         val = vlm_result.get(field)
                         if val is None:
                             continue
+                        
                         print(f"[VLM保底] 第{vlm_attempt}次 更新欄位 [{field}]: → {val}")
 
                         if field == "發票號碼":

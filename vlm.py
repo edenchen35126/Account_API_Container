@@ -2968,6 +2968,12 @@ def extract_fields_from_image_region(
         # result = json.loads(json_match.group())
         result = json.loads(repair_json(json_match.group()))
 
+        for f in failed_fields:
+            val = result.get(f)
+            if isinstance(val, (int, float)) and f != "合計金額" and f not in ("未稅金額", "稅額"):
+                print(f"⚠️  [VLM保底] 欄位 [{f}] 解析結果型別異常（{type(val)}={val}），可能是誤抓信心值片段，清空")
+                result[f] = None
+
         # 數字欄位清理
         for key in ["未稅金額", "稅額", "合計金額"]:
             if result.get(key):
