@@ -3192,7 +3192,7 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
                         qty = float(qty_num_str)
                     price = float(price_str)
                     amt   = float(amt_str2)
-                    if abs(qty * price - amt) > 0.1:
+                    if abs(qty * price - amt) > 0.5:
                         print(f"⚠️  [LLM重試] 明細 數量*單價≠金額: {qty_num_str}×{price_str}={qty * price:.2f}，金額={amt}，標記重抓")
                         llm_detail_qty_price_mismatch = True
                 except (ValueError, ZeroDivisionError):
@@ -3469,7 +3469,7 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
                                         qty = float(qty_num_str)
                                     price = float(price_str)
                                     amt   = float(amt_str2)
-                                    if abs(qty * price - amt) > 0.1:
+                                    if abs(qty * price - amt) > 0.5:
                                         print(f"⚠️  [VLM保底] 明細 數量*單價≠金額: {qty_num_str}×{price_str}={qty * price:.2f}，金額={amt}，標記重抓")
                                         detail_qty_price_mismatch = True
                                 except (ValueError, ZeroDivisionError):

@@ -2841,6 +2841,7 @@ def extract_fields_from_image_region(
     - 原幣金額(含稅)
     - 幣別
     - 匯率
+    - 幣別代碼（例如 USD、US$、EUR、JPY、CNY、美金、外幣、原幣）
 
     這些屬於「原幣 / 外幣 / 匯率換算資訊」，
     不是本次要擷取的未稅金額、稅額、合計金額。
@@ -2879,6 +2880,13 @@ def extract_fields_from_image_region(
 - 數學關係只能用於驗證辨識結果，不可用數學關係決定某個數字屬於哪個欄位。
 - 若圖片同時存在本幣結算資訊與原幣／外幣／匯率換算資訊，優先使用發票主要結算使用的本幣金額。
 - 找不到可靠的文字語意與數值對應關係時才輸出 null。
+
+【幣別規則－最高優先】
+- 如果金額寫在發票備註區顯示，不屬於主要結算金額，應忽略該金額，僅擷取相關「銷售額合計」、「營業稅」與「總計」金額資訊。
+- 如果USD相關的金額出現在發票備註區顯示，且相關「銷售額合計」、「營業稅」與「總計」金額資訊不在發票備註區，且與USD相關金額的資訊有一定的位置
+，請將這邊的「銷售額合計」、「營業稅」與「總計」對應金額作為主要結算金額。
+
+
 """
 
     vlm_source_guard = """
@@ -2931,26 +2939,47 @@ def extract_fields_from_image_region(
         {instructions}
 
         請用以下 JSON 格式回答，找不到的欄位填 null，不要加任何多餘說明：
-        {json.dumps(json_template, ensure_ascii=False, indent=2)}"""
+        {json.dumps(json_template, ensure_ascii=False, indent=2)}
+
+        【輸出格式－最高優先】
+        - 只能輸出一個完整的 JSON 物件，必須以左大括號開頭、以右大括號結尾。
+        - 禁止輸出 JSON 以外的任何文字、標題或 markdown。
+        - 所有欄位（含 reason 與 欄位信心值）都必須放在同一個 JSON 物件內。"""
 
     try:
         b64_image = image_to_base64(image_pil)
 
-        response = client.chat.completions.create(
-            model=VLLM_MODEL,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text",      "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
-                ]
-            }],
-            max_tokens=2048,
-            temperature=0.0,
-            extra_body={
-                "max_soft_tokens": 1120
-            }
-        )
+        _vlm_messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text",      "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
+            ]
+        }]
+
+        try:
+            # 要求伺服器強制回傳 JSON 物件，避免輸出純文字格式
+            response = client.chat.completions.create(
+                model=VLLM_MODEL,
+                messages=_vlm_messages,
+                max_tokens=2048,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                extra_body={
+                    "max_soft_tokens": 1120
+                }
+            )
+        except Exception as _fmt_exc:
+            print(f"⚠️  [VLM保底] response_format 不支援或失敗（{_fmt_exc}），改用一般模式")
+            response = client.chat.completions.create(
+                model=VLLM_MODEL,
+                messages=_vlm_messages,
+                max_tokens=2048,
+                temperature=0.0,
+                extra_body={
+                    "max_soft_tokens": 1120
+                }
+            )
 
         content = (response.choices[0].message.content or "").strip()
         print(f"[VLM保底] 回應:\n{content}\n")
@@ -3171,6 +3200,7 @@ def extract_tax_type_from_image(image_pil: Image.Image) -> dict:
     """專用 VLM：對裁切後的稅別區塊圖片做營業稅稅別判斷。"""
     prompt = """
     請判斷這張圖片中的營業稅稅別勾選結果。
+    
 
     【最高優先原則：只能根據圖片中的實際勾選記號判斷】
 
@@ -3295,26 +3325,7 @@ def extract_tax_type_from_image(image_pil: Image.Image) -> dict:
 
     單獨作為輸出 null 的理由。
 
-    ==================================================
-    【本案例類型】
-    ==================================================
-
-    如果圖片顯示：
-
-    應稅       零稅率       免稅
-    V
-
-    其中 V 明確位於「應稅」欄位正下方，
-
-    則必須輸出：
-
-    {
-    "營業稅稅別判斷": "應稅",
-    "reason": "可見 V 記號位於應稅欄位正下方，因此判斷應稅",
-    "信心値": 0.95
-    }
-
-    禁止輸出 null。
+    
 
     ==================================================
     【禁止推論】
