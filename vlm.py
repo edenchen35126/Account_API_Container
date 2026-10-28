@@ -1699,9 +1699,84 @@ def _has_explicit_remark_field(
         # Fail-open，不影響原流程
         return True
 
+# ============================================================
+# ✅ 台光電子材料：金額表格專用空間 Prompt（只描述版型，不寫死任何金額）
+# ============================================================
+_TAIGUANG_SELLER_NAME = "台光電子材料股份有限公司"
+_TAIGUANG_AMOUNT_FIELDS = {"未稅金額", "稅額", "合計金額", "金額大寫中文"}
+
+
+def _is_taiguang_seller(seller_company_name: str | None) -> bool:
+    """只比對 processor.py 已辨識的賣方名稱，不另做 OCR。"""
+    if not seller_company_name:
+        return False
+    name = re.sub(r"\s+", "", str(seller_company_name))
+    name = name.replace("臺", "台")
+    return _TAIGUANG_SELLER_NAME in name
+
+
+def _build_taiguang_amount_prompt(
+    failed_fields: list,
+    json_template: dict,
+    vlm_source_guard: str,
+) -> str:
+    """為下半部固定相對版型建立短 Prompt；每張發票仍以圖片實際文字為準。"""
+    return f"""
+你是一個專門擷取「台光電子材料股份有限公司」發票下半部金額區域的視覺辨識器。
+賣方公司名稱已由上游程式確認，本次不要重新辨識公司名稱。
+你只需要處理：{', '.join(failed_fields)}。
+
+{vlm_source_guard}
+
+【專用下半部版型：請依表格的相對空間位置讀取】
+這類發票的下半部，可能從上到下依序包含以下橫向列：
+
+  外幣參考列：USD / USD Tax / USD Total（不是目標金額）
+  第 1 列：左側「銷售額合計」 ────────── 右側金額儲存格
+  第 2 列：左側「營業稅」+ 應稅／零稅率／免稅選項 ─ 右側稅額儲存格
+  第 3 列：左側「總計」 ────────────── 右側金額儲存格
+  第 4 列：左側「總計新台幣(中文大寫)」 ── 同列中右方中文財務大寫
+  右邊還可能有「營業人蓋統一發票專用章」及賣方資料：全部忽略。
+
+【相對位置判讀：這是最高優先規則】
+1. 先在圖片左側找「銷售額合計」，沿著同一條水平列往右，
+   找到右方狹窄的金額儲存格，該數字才是「未稅金額」。
+2. 往下一整列找「營業稅」。這一列中間雖然有「應稅／零稅率／免稅」
+   的文字和勾選符號，但它們不是稅額；稅額在同一列最右側、
+   位於賣方蓋章區域左邊的金額儲存格內。
+   如果圖片實際顯示 0，輸出字串 "0"，不能當作空白。
+3. 再往下一整列找「總計」，沿同一列向右，
+   該金額儲存格內的數字是「合計金額」。
+4. 最底部「總計新台幣(中文大寫)」的同一橫列內，
+   讀取真正印出的中文財務大寫；不可使用數字計算產生中文大寫。
+5. 金額欄位的標題與右側數字相距很遠是正常版型：
+   不可以因為中間空白很多就說「欄位沒有對應數值」。
+6. 若圖片不是以上布局，則以實際格線、同一橫列與欄位語意為準，
+   不可硬套版型或填入假資料。
+
+【嚴格排除】
+- USD / USD Tax / USD Total 為另一組參考金額，不可取代目標欄位。
+- 禁止因為看到美元資訊，就推論「銷售額合計／營業稅／總計」不存在。
+- 禁止用右邊賣方章、統編、地址中的數字當作金額。
+- 各欄位須各自讀取，不可單憑「未稅＋稅＝總計」反推出不存在的數字。
+- 不可根據其他數字轉換中文大寫；只能照抄圖片實際可見的文字。
+- 版型描述不是標準答案，圖片看不到、看不清楚時才輸出 null。
+
+請直接回傳以下 JSON，不要輸出 Markdown 或額外說明：
+{json.dumps(json_template, ensure_ascii=False, indent=2)}
+
+reason 請簡短說明各欄位對應哪一列、是否直接看見數值。
+金額請以字串輸出（可以去掉千分位逗號，不得改動小數點）。
+欄位信心值請用 0～1 的數字或 null。只輸出完整 JSON 物件。
+"""
+
+
 def extract_fields_from_image_region(
     image_pil: Image.Image,
-    failed_fields: list
+    failed_fields: list,
+    *,
+    seller_company_name: str | None = None,
+    skip_amount_uppercase_gate: bool = False,
 ) -> dict:
     """
     單次 VLM 辨識，回傳擷取結果
@@ -1777,13 +1852,29 @@ def extract_fields_from_image_region(
     # 不修改原 prompt，只決定最後是否允許保留「金額大寫中文」。
     amount_uppercase_gate_found = True
 
-    if "金額大寫中文" in failed_fields:
-        amount_uppercase_gate_found, _ = (
-            _has_suspected_financial_uppercase_amount(
-                image_pil
-            )
-        )
+    # ✅ 僅允許 processor.py 第3次金額補救中的「台光」例外：
+    # 使用既有賣方名稱、限定金額欄位，才跳過大寫存在性 Gate。
+    # 其他廠商與其他 VLM 呼叫維持原本檢查，不改動其行為。
+    _skip_uppercase_gate_for_taiguang = (
+        skip_amount_uppercase_gate
+        and _is_taiguang_seller(seller_company_name)
+        and bool(failed_fields)
+        and set(failed_fields).issubset(_TAIGUANG_AMOUNT_FIELDS)
+    )
 
+    if "金額大寫中文" in failed_fields:
+        if _skip_uppercase_gate_for_taiguang:
+            print(
+                "[VLM保底][台光專用金額版型] "
+                "跳過金額大寫存在性 Gate；保留本次 VLM 實際辨識結果"
+            )
+        else:
+            amount_uppercase_gate_found, _ = (
+                _has_suspected_financial_uppercase_amount(
+                    image_pil
+                )
+            )
+        
 
     field_instructions = {
         "發票日期": """
@@ -2870,24 +2961,74 @@ def extract_fields_from_image_region(
     """
 
     amount_common_instruction = """
-【金額欄位辨識共通規則】
+    【金額欄位辨識共通規則－最高優先】
 
-- 不可假設發票具有固定版型、固定位置或固定欄位名稱。
-- 必須依圖片中的文字語意、相對位置與數值對應關係，判斷每個金額屬於哪個欄位。
-- 欄位名稱可能因發票格式而有不同寫法、縮寫、空格、標點或字距，只要語意相同即可視為同一欄位。
-- 常見欄位名稱只能作為提示，不是唯一允許的名稱。
-- 必須先從圖片判斷欄位歸屬，再讀取該欄位對應的數值。
-- 數學關係只能用於驗證辨識結果，不可用數學關係決定某個數字屬於哪個欄位。
-- 若圖片同時存在本幣結算資訊與原幣／外幣／匯率換算資訊，優先使用發票主要結算使用的本幣金額。
-- 找不到可靠的文字語意與數值對應關係時才輸出 null。
+    本次任務為「依發票正式欄位擷取金額」，
+    不是判斷交易幣別、收款幣別或主要結算幣別。
 
-【幣別規則－最高優先】
-- 如果金額寫在發票備註區顯示，不屬於主要結算金額，應忽略該金額，僅擷取相關「銷售額合計」、「營業稅」與「總計」金額資訊。
-- 如果USD相關的金額出現在發票備註區顯示，且相關「銷售額合計」、「營業稅」與「總計」金額資訊不在發票備註區，且與USD相關金額的資訊有一定的位置
-，請將這邊的「銷售額合計」、「營業稅」與「總計」對應金額作為主要結算金額。
+    【一、欄位辨識原則】
 
+    1. 先辨識圖片中的金額欄位標題，
+    再依表格格線、相同水平列、相鄰儲存格
+    或明確的標籤與數值關係，取得對應金額。
 
-"""
+    2. 常見欄位對應：
+    - 未稅金額：銷售額、銷售額合計
+    - 稅額：營業稅、稅額
+    - 合計金額：總計、合計金額
+
+    3. 發票不一定具有固定版型，
+    欄位標題可能有不同寫法。
+    應依實際欄位語意與空間位置判斷。
+
+    4. 欄位標題與數字可能相距較遠。
+    不可僅因中間存在空白就判定沒有對應數值。
+
+    【二、備註與外幣資訊】
+
+    1. 發票可能同時存在正式金額欄位、
+    商品明細金額、外幣資訊及備註金額。
+
+    2. 備註區的 USD、EUR 等外幣資訊，
+    不可覆寫發票正式金額欄位。
+
+    3. 備註區出現 USD，
+    不代表整張發票的所有數字都是 USD。
+
+    4. 禁止將備註區的幣別，
+    自動套用到其他區域沒有標示幣別的數字。
+
+    5. 如果「銷售額合計」、「營業稅」、
+    「總計」具有可辨識的對應金額，
+    應直接擷取其數值。
+
+    6. 不需要判斷這些正式金額是否為
+    發票的主要交易或收款幣別。
+
+    7. 若正式金額欄位本身明確標示外幣，
+    應依欄位原文與既有原幣排除規則處理，
+    不可自行假設其為新台幣。
+
+    【三、數值判讀】
+
+    1. 所有金額以圖片實際可見內容為準。
+    2. 數字 0 是有效金額，不可視為空白。
+    3. 不可使用匯率自行換算。
+    4. 不可將明細、備註或其他欄位數字
+    移入正式金額欄位。
+    5. 數學關係僅用於驗證，不可取代欄位辨識。
+    6. 只有在對應數值無法可靠辨識時，
+    才輸出 null。
+
+    【四、reason 說明要求】
+
+    reason 只需要說明：
+    - 擷取到哪個正式金額欄位。
+    - 該欄位對應的實際數值。
+    - 若排除備註或外幣數值，簡述原因。
+
+    禁止自行推論圖片未明示的主要結算幣別。
+    """
 
     vlm_source_guard = """
     【圖片資料來源限制－最高優先】
@@ -2930,6 +3071,8 @@ def extract_fields_from_image_region(
 
         {vlm_source_guard}
 
+        {amount_priority_instruction}
+
         {amount_common_instruction}
 
         {tax_layout_hint}
@@ -2945,6 +3088,24 @@ def extract_fields_from_image_region(
         - 只能輸出一個完整的 JSON 物件，必須以左大括號開頭、以右大括號結尾。
         - 禁止輸出 JSON 以外的任何文字、標題或 markdown。
         - 所有欄位（含 reason 與 欄位信心值）都必須放在同一個 JSON 物件內。"""
+
+    # ✅ 只在 processor.py 第3次金額補救傳入台光賣方名稱時套用。
+    # ✅ 非金額欄位、其他廠商、舊有呼叫方式都沿用上方通用 Prompt。
+    _use_taiguang_amount_prompt = (
+        _is_taiguang_seller(seller_company_name)
+        and bool(failed_fields)
+        and set(failed_fields).issubset(_TAIGUANG_AMOUNT_FIELDS)
+    )
+    if _use_taiguang_amount_prompt:
+        print(
+            "[VLM保底][台光專用金額版型] 已套用下半部空間辨識 Prompt，"
+            f"fields={failed_fields}"
+        )
+        prompt = _build_taiguang_amount_prompt(
+            failed_fields,
+            json_template,
+            vlm_source_guard,
+        )
 
     try:
         b64_image = image_to_base64(image_pil)
@@ -3005,7 +3166,7 @@ def extract_fields_from_image_region(
 
         # 數字欄位清理
         for key in ["未稅金額", "稅額", "合計金額"]:
-            if result.get(key):
+            if result.get(key) is not None:
                 result[key] = str(result[key]).replace(",", "").strip()
 
         # ============================================================

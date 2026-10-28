@@ -4194,7 +4194,30 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
 
             #     vlm_input_amount = page
 
-             # ✅ 先清除舊值
+            # ============================================================
+            # ✅ 台光電子材料：只使用目前流程已取得的最終賣方名稱決定 Prompt
+            # ============================================================
+            # 不額外執行 OCR / 不掃描圖片搜尋公司名稱。
+            # normalize_company_name() 已支援「臺」/「台」視為相同。
+            _seller_name_for_amount = normalize_company_name(
+                str(seller_company_name or "")
+            )
+            _is_taiguang_amount = (
+                "台光電子材料股份有限公司" in _seller_name_for_amount
+            )
+
+            if _is_taiguang_amount:
+                print(
+                    f"[VLM第3次][金額欄位][台光專用版型] 啟用，"
+                    f"賣方名稱={seller_company_name!r}"
+                )
+            else:
+                print(
+                    f"[VLM第3次][金額欄位] 使用一般 Prompt，"
+                    f"賣方名稱={seller_company_name!r}"
+                )
+
+            # ✅ 先清除舊值
             for field_name in _amount_failed_fields:
                 llm_fields[field_name] = None
                 field_source.pop(field_name, None)
@@ -4208,9 +4231,16 @@ def process_document(file_path: str, work_dir: str) -> list[dict]:
 
             vlm_input_amount = page
 
+
+            # ✅ 只有第3次金額補救，而且賣方為台光時，跳過中文大寫存在性 Gate。
+            # 其餘廠商、其餘 VLM 階段照原流程檢查；不重新查 OCR 賣方名稱。
             vlm_result_amount = extract_fields_from_image_region(
                 vlm_input_amount,
-                _amount_failed_fields
+                _amount_failed_fields,
+                seller_company_name=(
+                    seller_company_name if _is_taiguang_amount else None
+                ),
+                skip_amount_uppercase_gate=_is_taiguang_amount,
             )
 
             vlm_conf_amount = (
