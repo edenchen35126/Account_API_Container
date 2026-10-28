@@ -4,6 +4,7 @@ python-multipart
 
 SQLAlchemy
 psycopg2-binary
+psycopg[binary]
 python-dotenv
 
 openai==2.37.0
