@@ -3503,7 +3503,7 @@ def verify_seller_name_matches_tax_id(company_name: str, tax_id: str) -> dict:
     try:
         print(f"[LLM賣方驗證] 判斷公司名稱 '{company_name}' 與統編 '{tax_id}' 是否相符...")
         response = client.chat.completions.create(
-            model=VLLM_LLM_MODEL_3,
+            model=VLLM_LLM_MODEL_2,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=128,
             temperature=0.0
